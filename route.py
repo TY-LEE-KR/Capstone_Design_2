@@ -24,7 +24,7 @@ class RouteDICE(nn.Linear):
         self.masked_w = (self.weight.squeeze().cpu() * mask).cuda()
 
     def forward(self, input, info, info_up, weight):
-        if info_up: # self.masked_w is None and
+        if info_up: 
             self.calculate_mask_weight(info, weight)
         vote = input[:, None, :] * self.masked_w.cuda()
         if self.bias is not None:
