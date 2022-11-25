@@ -19,9 +19,13 @@ for some einops/einsum fun
 
 Hacked together by / Copyright 2020, Ross Wightman
 # ------------------------------------------
-# Modification:
+# pytorch Implementation:
 # Added code for dualprompt implementation
 # -- Jaeho Lee, dlwogh9344@khu.ac.kr
+# ------------------------------------------
+# Modification:
+# Added code for replay method
+# -- Taeyoung Lee, slcks1@khu.ac.kr
 # ------------------------------------------
 """
 import math
@@ -42,6 +46,7 @@ from timm.models.registry import register_model
 
 from prompt import EPrompt
 from attention import PreT_Attention
+from route import *
 
 _logger = logging.getLogger(__name__)
 
@@ -338,7 +343,7 @@ class VisionTransformer(nn.Module):
             prompt_length=None, embedding_key='cls', prompt_init='uniform', prompt_pool=False, prompt_key=False, pool_size=None,
             top_k=None, batchwise_prompt=False, prompt_key_init='uniform', head_type='token', use_prompt_mask=False,
             use_g_prompt=False, g_prompt_length=None, g_prompt_layer_idx=None, use_prefix_tune_for_g_prompt=False,
-            use_e_prompt=False, e_prompt_layer_idx=None, use_prefix_tune_for_e_prompt=False, same_key_value=False,):
+            use_e_prompt=False, e_prompt_layer_idx=None, use_prefix_tune_for_e_prompt=False, same_key_value=False, p=None,):
         """
         Args:
             img_size (int, tuple): input image size
@@ -379,6 +384,7 @@ class VisionTransformer(nn.Module):
         self.num_prefix_tokens = 1 if class_token else 0
         self.no_embed_class = no_embed_class
         self.grad_checkpointing = False
+        self.p = p
 
         self.patch_embed = embed_layer(
             img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim)
@@ -469,6 +475,7 @@ class VisionTransformer(nn.Module):
         # Classifier Head
         self.fc_norm = norm_layer(embed_dim) if use_fc_norm else nn.Identity()
         self.head = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
+        self.head_route = RouteDICE(self.embed_dim, self.num_classes, p=self.p)
 
         if weight_init != 'skip':
             self.init_weights(weight_init)
@@ -515,7 +522,7 @@ class VisionTransformer(nn.Module):
             self.global_pool = global_pool
         self.head = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
 
-    def forward_features(self, x, task_id=-1, cls_features=None, train=False):
+    def forward_features(self, x, task_id=-1, cls_features=None, train=False, replay=None):
         x = self.patch_embed(x)
 
         if self.cls_token is not None:
@@ -540,7 +547,7 @@ class VisionTransformer(nn.Module):
                 g_prompt_counter = -1
                 e_prompt_counter = -1
 
-                res = self.e_prompt(x, prompt_mask=prompt_mask, cls_features=cls_features)
+                res = self.e_prompt(x, prompt_mask=prompt_mask, cls_features=cls_features, replay=replay)
                 e_prompt = res['batched_prompt']
 
                 for i, block in enumerate(self.blocks):
@@ -576,7 +583,7 @@ class VisionTransformer(nn.Module):
 
         return res
 
-    def forward_head(self, res, pre_logits: bool = False):
+    def forward_head(self, res, score=False, info=None, info_up=None, pre_logits: bool = False):
         x = res['x']
         if self.class_token and self.head_type == 'token':
             if self.prompt_pool:
@@ -600,11 +607,14 @@ class VisionTransformer(nn.Module):
         
         res['logits'] = self.head(x)
         
+        if score:
+            res['score'] = self.head_route(x, info, info_up, self.head.weight)
+
         return res
 
-    def forward(self, x, task_id=-1, cls_features=None, train=False):
-        res = self.forward_features(x, task_id=task_id, cls_features=cls_features, train=train)
-        res = self.forward_head(res)
+    def forward(self, x, task_id=-1, cls_features=None, train=False, score=False, info=None, info_up=None, replay=None):
+        res = self.forward_features(x, task_id=task_id, cls_features=cls_features, train=train, replay=replay)
+        res = self.forward_head(res, score=score, info=info, info_up=info_up)
         return res
 
 

@@ -7,9 +7,13 @@
 # Licensed under The MIT License [see LICENSE for details]
 # Written by Ze Liu
 # --------------------------------------------------------
-# Modification:
+# pytorch Implementation:
 # Added code for dualprompt implementation
 # -- Jaeho Lee, dlwogh9344@khu.ac.kr
+# --------------------------------------------------------
+# Modification:
+# Added code for replay method
+# -- Taeyoung Lee, slcks1@khu.ac.kr
 # --------------------------------------------------------
 import os
 import random
@@ -41,9 +45,9 @@ class ContinualDataLoader:
             raise NotImplementedError(f"Not supported dataset: {self.args.dataset}")
         
     def create_dataloader(self):
-        dataloader, class_mask = self.split()
+        dataloader, class_mask, train_len_info, split_dataset, save_data = self.split()
         
-        return dataloader, class_mask
+        return dataloader, class_mask, train_len_info, split_dataset, save_data
     
     def target_transform(self, x):
         # Target transform form splited dataset, 0~9 -> 0~9, 10~19 -> 0~9, 20~29 -> 0~9..
@@ -51,6 +55,15 @@ class ContinualDataLoader:
 
     def split(self):
         dataloader = []
+        
+        # for replay buffer
+        split_dataset = []
+        train_len_info = []
+        save_data = [[]]
+
+        for i in range(self.args.nb_classes):
+                save_data.append([])
+
         labels = [i for i in range(self.args.nb_classes)] # [0, 1, 2, ..., 99]
         
         if self.args.shuffle:
@@ -71,6 +84,7 @@ class ContinualDataLoader:
             for k in range(len(self.dataset_train.targets)):
                 if int(self.dataset_train.targets[k]) in scope:
                     train_split_indices.append(k)
+                    save_data[int(self.dataset_train.targets[k])].append(k)
                     
             for h in range(len(self.dataset_val.targets)):
                 if int(self.dataset_val.targets[h]) in scope:
@@ -78,6 +92,8 @@ class ContinualDataLoader:
             
             # self.dataset_train.target_transform = Lambda(self.target_transform)
             # self.dataset_val.target_transform = Lambda(self.target_transform)
+
+            train_len_info.append(len(train_split_indices))
 
             dataset_train, dataset_val =  Subset(self.dataset_train, train_split_indices), Subset(self.dataset_val, test_split_indices)
 
@@ -107,10 +123,47 @@ class ContinualDataLoader:
                 pin_memory=self.args.pin_mem,
             )
 
+            split_dataset.append({'train': dataset_train})
             dataloader.append({'train': data_loader_train, 'val': data_loader_val})
         
-        return dataloader, class_mask
+        return dataloader, class_mask, train_len_info, split_dataset, save_data
 
+    def replay_dataloader(self, replay_index):
+        # and it need for training with replay
+
+        dataset_train =  Subset(self.dataset_train, replay_index)
+
+        if self.args.distributed and utils.get_world_size() > 1:
+            num_tasks = utils.get_world_size()
+            global_rank = utils.get_rank()
+
+            sampler_train = torch.utils.data.DistributedSampler(
+                dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True)
+        else:
+            sampler_train = torch.utils.data.RandomSampler(dataset_train)
+
+        dataloader_replay = torch.utils.data.DataLoader(
+                dataset_train, sampler=sampler_train,
+                batch_size=self.args.batch_size,
+                num_workers=self.args.num_workers,
+                pin_memory=self.args.pin_mem,
+            )
+
+        return dataloader_replay
+
+    def one_class_dataloader(self, class_idx):
+        # and it need for compute score
+
+        dataset_train =  Subset(self.dataset_train, class_idx)
+
+        dataloader_class = torch.utils.data.DataLoader(
+                dataset_train, shuffle=False,
+                batch_size=self.args.batch_size,
+                num_workers=self.args.num_workers,
+                pin_memory=self.args.pin_mem,
+            )
+
+        return dataloader_class
 
 def build_transform(is_train, args):
     resize_im = args.input_size > 32

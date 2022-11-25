@@ -2,9 +2,13 @@
 # Copyright (c) 2015-present, Facebook, Inc.
 # All rights reserved.
 # ------------------------------------------
-# Modification:
+# pytorch Implementation:
 # Added code for dualprompt implementation
 # -- Jaeho Lee, dlwogh9344@khu.ac.kr
+# ------------------------------------------
+# Modification:
+# Added code for replay method
+# -- Taeyoung Lee, slcks1@khu.ac.kr
 # ------------------------------------------
 import sys
 import argparse
@@ -136,6 +140,16 @@ def get_args_parser():
     parser.add_argument('--pull_constraint_coeff', default=1.0, type=float)
     parser.add_argument('--same_key_value', default=False, type=bool)
 
+    # Replay trick
+    parser.add_argument('--replay_buffer', default=True, type=bool, help='if using the replay buffer')
+    parser.add_argument('--num_samples_per_class', default=10, type=int, help='number of samples per class in replay buffer')
+    parser.add_argument('--include_new_task', default=True, type=bool)
+    parser.add_argument('--replay_no_mask', default=True, type=bool, help='if doing replay, no masking on class')
+    parser.add_argument('--num_replay_batch_ctl', default=20, type=int, help='number of replay samples control')
+
+    # OOD Socre
+    parser.add_argument('--p', default=10, type=int, help='sparsity level')
+
     # ViT parameters
     parser.add_argument('--global_pool', default='token', choices=['token', 'avg'], type=str, help='type of global pooling for final sequence')
     parser.add_argument('--head_type', default='token', choices=['token', 'gap', 'prompt', 'token+prompt'], type=str, help='input type of classification head')
@@ -148,7 +162,8 @@ def get_args_parser():
 
 
 def main(args):
-    utils.init_distributed_mode(args)
+    # utils.init_distributed_mode(args)
+    args.distributed = False # not use distributed system
 
     device = torch.device(args.device)
 
@@ -161,7 +176,7 @@ def main(args):
     cudnn.benchmark = True
 
     continual_dataloader = ContinualDataLoader(args)
-    data_loader, class_mask = continual_dataloader.create_dataloader()
+    data_loader, class_mask, train_len_info, split_data, save_data = continual_dataloader.create_dataloader()
 
     print(f"Creating original model: {args.model}")
     original_model = create_model(
@@ -200,6 +215,7 @@ def main(args):
         e_prompt_layer_idx=args.e_prompt_layer_idx,
         use_prefix_tune_for_e_prompt=args.use_prefix_tune_for_e_prompt,
         same_key_value=args.same_key_value,
+        p=args.p,
     )
     original_model.to(device)
     model.to(device)  
@@ -262,7 +278,7 @@ def main(args):
 
     train_and_evaluate(model, model_without_ddp, original_model,
                     criterion, data_loader, optimizer, lr_scheduler,
-                    device, class_mask, args)
+                    device, class_mask, train_len_info, split_data, save_data, continual_dataloader, args)
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))

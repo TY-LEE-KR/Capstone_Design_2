@@ -1,3 +1,8 @@
+# --------------------------------------------------------
+# Modification:
+# Added code for replay method
+# -- Taeyoung Lee, slcks1@khu.ac.kr
+# --------------------------------------------------------
 import torch
 import torch.nn as nn
 
@@ -70,7 +75,7 @@ class EPrompt(nn.Module):
         x_inv_norm = torch.rsqrt(torch.maximum(square_sum, torch.tensor(epsilon, device=x.device)))
         return x * x_inv_norm
     
-    def forward(self, x_embed, prompt_mask=None, cls_features=None):
+    def forward(self, x_embed, prompt_mask=None, cls_features=None, replay=None):
         out = dict()
         if self.prompt_pool:
             if self.embedding_key == 'mean':
@@ -97,7 +102,7 @@ class EPrompt(nn.Module):
             (similarity_top_k, idx) = torch.topk(similarity, k=self.top_k, dim=1) # B, top_k
             out['similarity'] = similarity
 
-            if self.batchwise_prompt:
+            if self.batchwise_prompt and replay is None:
                 prompt_id, id_counts = torch.unique(idx, return_counts=True, sorted=True)
                 # In jnp.unique, when the 'size' is specified and there are fewer than the indicated number of elements,
                 # the remaining elements will be filled with 'fill_value', the default is the minimum value along the specified dimension.
