@@ -54,8 +54,6 @@ Or you can simply use 'train.sh' if you use slurm system.
 sbatch train.sh
 ```
 
-Also available in Slurm by changing options on `train.sh`
-
 ## Evaluation
 To evaluate a trained model:
 ```
