@@ -13,7 +13,7 @@ The system I used and tested in
 ## Usage
 First, clone the repository locally:
 ```
-git clone https://github.com/Lee-JH-KR/dualprompt-pytorch](https://github.com/TY-LEE-KR/L2P_with_DICE.git
+git clone https://github.com/TY-LEE-KR/Capstone_Design_2.git
 cd Capstone_Designe_2
 ```
 Then, install the packages below:
